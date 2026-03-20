@@ -20,7 +20,7 @@ Desenvolva a integração com Cloudinary e Gemini para analisar transcrições e
 
 ### Links de Referêcia
 
-https://cloudinary.com/documentation/upload_widget
-https://ai.google.dev/
-https://tailwindcss.com/
-https://gsap.com/
+https://cloudinary.com/documentation/upload_widget <br>
+https://ai.google.dev/ <br>
+https://tailwindcss.com/ <br>
+https://gsap.com/ <br>
