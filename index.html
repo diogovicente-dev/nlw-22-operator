@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ClipMaker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+    <style>
+      body {
+        background: #1e1e1e;
+        min-height: 100vh;
+        font-family: "Inter", sans-serif;
+      }
+
+      /* Garantir placeholder bem visível mesmo após animações */
+      input::placeholder {
+        color: rgba(255, 255, 255, 0.9) !important;
+        opacity: 1 !important;
+      }
+
+      .glass {
+        backdrop-filter: blur(10px);
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+    </style>
+  </head>
+  <body class="flex flex-col items-center justify-center py-32 px-8 space-y-8">
+    <h1
+      class="text-4xl font-bold tracking-tight text-white glass rounded-lg px-8 py-4 shadow-sm hover:shadow-xl transition-shadow duration-300"
+    >
+      ClipMaker
+    </h1>
+    <input
+      id="apiKey"
+      type="text"
+      placeholder="Coloque sua chave de API do Gemini"
+      class="w-full max-w-md px-4 py-3 rounded-lg border border-gray-600 bg-gray-800/80 text-white placeholder-white placeholder:text-white placeholder:opacity-100 backdrop-blur-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-transparent hover:shadow-md transition-all duration-300 hover:scale-[1.02]"
+    />
+    <button
+      id="uploadWidget"
+      class="relative z-10 px-6 py-3 bg-indigo-500 text-white rounded-lg shadow-sm hover:bg-indigo-600 hover:shadow-xl hover:scale-[1.02] transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+    >
+      Upload files
+    </button>
+    <p id="status" class="text-gray-400 text-center max-w-md"></p>
+    <video
+      id="video"
+      controls
+      class="w-full max-w-2xl rounded-lg shadow-sm hover:shadow-xl transition-shadow duration-300"
+    ></video>
+
+    <script
+      src="https://upload-widget.cloudinary.com/latest/global/all.js"
+      type="text/javascript"
+    ></script>
+
+    <script type="text/javascript">
+      // funções do app
+      // registrando as funções para uso posterior (em tempo de aplicação)
+      const el = {
+        status: document.getElementById("status"),
+        video: document.getElementById("video"),
+        apiKey: document.getElementById("apiKey"),
+        button: document.getElementById("uploadWidget")
+      }
+
+      const app = {
+        // URL da transcrição
+        transcriptionUrl: "",
+        public_id: "",
+
+        // polling = aguarda a transcrição
+        waitForTranscription: async () => {
+          // preciso de um polling para saber se a transcrição está pronta
+          // tente 30 vezes
+          // a url de exemplo é essa
+          // https://res.cloudinary.com/drhl8vrc2/raw/upload/v177205886/yppe8e5rxqti7tclx0ym.transcript
+          // drhl8vrc2 é a config.cloudName
+          // yppe8e5rxqti7tclx0ym esse é o app.public_id
+          // v177205886 esse é v${Date.now()}
+
+          const maxAttempts = 30
+          const delay = 4000 // 4 segundos entre tentativas
+
+          for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            // usar a 'crase' para criar a url dinamicamente - template literal
+            const url = `https://res.cloudinary.com/${config.cloudName}/raw/upload/v${Date.now()}/${app.public_id}.transcript`
+
+            try {
+              console.log(
+                `Tentativa ${attempt}/${maxAttempts}: Verificando transcrição ...`
+              )
+              const response = await fetch(url) // o await gera uma 'promessa' e espera a resposta da requisição para continuar a execução do código
+
+              if (response.ok) {
+                app.transcriptionUrl = url
+                console.log("Transcrição encontrada:", url)
+                return true // sempre que uma função encontrar um return ela 'pára' de executar, ou seja, não continua executando o código depois do return
+              }
+            } catch (error) {
+              console.log(
+                `Tentativa ${attempt}: Erro ao buscar transcrição:`,
+                error.message
+              )
+            }
+
+            // aguarda antes da próxima tentativa (exceto na última tentativa)
+            if (attempt < maxAttempts) {
+              await new Promise(resolve => setTimeout(resolve, delay))
+            }
+          }
+
+          console.log("Transcrição não encontrada após várias tentativas.")
+          return false
+        },
+
+        // busca a transcrição
+        getTranscription: async () => {
+          const response = await fetch(app.transcriptionUrl)
+          return response.text()
+        },
+
+        // busca o momento viral (baixa o vídeo)
+        getViralMoment: async () => {
+          const transcription = await app.getTranscription()
+          const model = "gemini-2.5-flash"
+          // URL para comunicação com o serviço/endpoint gemini
+          const endpointGemini = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`
+          // prompt a ser enviado para o gemini
+          const prompt = `Role: You are a professional video editor specializinh in viral content.
+                          Task: Analyze the transcription below and identify the most engaging, funny, or surprising segment.
+                          Contraints:
+                          1. Duration: minimum 30 seconds, maximum 60 seconds.
+                          2. Format: return ONLY the start and the end string for Cloudinary. Format: so_<start_seconds>, eo_<end_seconds>.
+                          3. Examples: "so_10,eo_20" or "so_12.5,eo_45.2".
+                          4. CRITICAL: do not use markdown, do not use quotes, do not explain. Return only the raw string
+
+                          Transcription:
+                          ${transcription}`
+          // criação do header/cabeçalho da chamada
+          const headers = {
+            "x-goog-api-key": el.apiKey.value, // obtendo o valor da APIKEY inserido
+            "Content-Type": "application/json"
+          }
+          // criação do body a ser enviado (crio em javascript e altero depois para JSON)
+          const contents = [
+            {
+              parts: [
+                {
+                  text: prompt
+                }
+              ]
+            }
+          ]
+          // aqui vai chamar o serviço do gemini, com retry em caso de erro na conexão com o gemini
+
+          const maxAttempts = 3
+          const delay = 1500
+
+          for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+              const response = await fetch(endpointGemini, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({ contents }) // aqui estou transformando para o padrão 'JSON'
+              })
+
+              if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`)
+              }
+
+              const data = await response.json()
+              const rawText = data.candidates[0].content.parts[0].text
+              return rawText.replace(/```/g, "").replace(/json/g, "").trim() // trim tira todos os espaços vazios
+            } catch (error) {
+              const isLastAttempt = attempt === maxAttempts
+              console.log(
+                `Gemini falhou (tentativa ${attempt}/${maxAttempts}):`,
+                error.message
+              )
+              if (isLastAttempt) {
+                throw error
+              }
+              await new Promise(resolve => setTimeout(resolve, delay))
+            }
+          }
+        }
+      }
+
+      // configurações do widget de upload do cloudinary
+      const config = {
+        cloudName: "drhl8vrc2", // cloud name da conta - pega no cloudinary settings
+        uploadPreset: "upload_nlw22" // ir em settings / upload no cloudinary e adcionar um upload preset
+      }
+
+      // função para abrir o widget de upload do cloudinary
+      const myWidget = cloudinary.createUploadWidget(
+        config,
+        async (error, result) => {
+          if (!error && result && result.event === "success") {
+            console.log("Done! Here is the image info: ", result.info)
+            app.public_id = result.info.public_id
+
+            try {
+              const isReady = await app.waitForTranscription()
+              if (!isReady) {
+                throw new Error("Erro ao buscar transcrição")
+              }
+              const viralMoment = await app.getViralMoment() // tem que responder no padrão so_12,eo_20
+              // agora é possível construir a url do momento viral
+              const viralMomentUrl = `https://res.cloudinary.com/${config.cloudName}/video/upload/${viralMoment}/${app.public_id}.mp4`
+              el.video.setAttribute("src", viralMomentUrl)
+            } catch (error) {
+              console.log({ error })
+            }
+          }
+        }
+      )
+
+      // listener para o clique no botão de upload e abrir o widget
+      el.button.addEventListener(
+        "click",
+        () => {
+          if (!el.apiKey.value) {
+            alert("Por favor insira sua API do Gemini primeiro")
+            el.apiKey.focus()
+            return
+          }
+          myWidget.open()
+        },
+        false
+      )
+
+      // GSAP animations
+      gsap.from("h1", {
+        duration: 1,
+        y: -50,
+        opacity: 0,
+        ease: "power2.out",
+        clearProps: "all"
+      })
+      gsap.from("input", {
+        duration: 1,
+        y: 50,
+        opacity: 0,
+        ease: "power2.out",
+        delay: 0.2,
+        clearProps: "all"
+      })
+      gsap.from("button", {
+        duration: 1,
+        y: 50,
+        opacity: 0,
+        ease: "power2.out",
+        delay: 0.4,
+        clearProps: "all"
+      })
+      gsap.from("p", {
+        duration: 1,
+        y: 50,
+        opacity: 0,
+        ease: "power2.out",
+        delay: 0.6,
+        clearProps: "all"
+      })
+      gsap.from("video", {
+        duration: 1,
+        y: 50,
+        opacity: 0,
+        ease: "power2.out",
+        delay: 0.8,
+        clearProps: "all"
+      })
+    </script>
+  </body>
+</html>
